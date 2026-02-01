@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { gql } from '@apollo/client';
 import { useQuery, useMutation, useSubscription } from '@apollo/client/react';
-import { Paperclip, FileText, Clock, Check, CheckCheck, AlertCircle } from 'lucide-react';
+import { Paperclip, FileText, Clock, Check, CheckCheck, AlertCircle, Lock } from 'lucide-react';
 
 const CREATE_CHAT = gql`
   mutation CreateChatRoom {
@@ -209,65 +209,98 @@ function ChatRoom({ roomId }: { roomId: string }) {
     if (loading) return <p>Loading chat...</p>;
 
     return (
-        <div className="flex flex-col h-full">
-            <div className="bg-white p-4 border-b flex justify-between items-center rounded-t shadow-sm">
-                <h2 className="font-semibold text-gray-800">Support Chat</h2>
-                <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">Secure</span>
+        <div className="flex flex-col h-full bg-[#efeae2] relative before:content-[''] before:absolute before:inset-0 before:opacity-5 before:pointer-events-none before:bg-[url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')]">
+            {/* Header */}
+            <div className="bg-white px-4 py-3 border-b flex justify-between items-center shadow-sm z-10 sticky top-0">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-teal-600 flex items-center justify-center text-white">
+                        <span className="font-semibold text-sm">CS</span>
+                    </div>
+                    <div>
+                        <h2 className="font-semibold text-slate-800 leading-tight">Medical Support</h2>
+                        <div className="flex items-center gap-1.5">
+                            <span className="relative flex h-2 w-2">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                            </span>
+                            <span className="text-xs text-slate-500">Online & Secure</span>
+                        </div>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="text-[10px] uppercase font-bold text-teal-600 bg-teal-50 px-2 py-1 rounded-full border border-teal-100 flex items-center gap-1">
+                        <Lock size={10} /> Encrypted
+                    </span>
+                </div>
             </div>
-            <div className="flex-1 overflow-y-auto mb-4 border-x border-b p-4 bg-white shadow-sm flex flex-col gap-3">
+
+            {/* Messages Area */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 z-0 custom-scrollbar">
                 {data?.getMessages.map((msg: any) => {
                     const isMe = currentUserEmail && msg.senderId === currentUserEmail;
                     const hasAttachment = !!msg.attachmentUrl;
                     const isPdf = hasAttachment && msg.attachmentUrl.toLowerCase().endsWith('.pdf');
 
                     return (
-                        <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                            <div className={`max-w-[80%] p-3 rounded-lg ${isMe ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'}`}>
-                                {msg.content && <p className="mb-1">{msg.content}</p>}
+                        <div key={msg.id} className={`flex w-full ${isMe ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`relative max-w-[80%] px-3 py-2 text-sm shadow-sm
+                                ${isMe
+                                    ? 'bg-teal-100 text-slate-900 rounded-lg rounded-tr-none'
+                                    : 'bg-white text-slate-900 rounded-lg rounded-tl-none'
+                                }
+                            `}>
+                                {msg.content && <p className="mb-1 whitespace-pre-wrap leading-relaxed">{msg.content}</p>}
+
                                 {hasAttachment && (
-                                    <div className="mt-2">
+                                    <div className="mt-2 mb-1">
                                         {isPdf ? (
-                                            <a href={msg.attachmentUrl} target="_blank" rel="noopener noreferrer" className={`flex items-center gap-2 p-2 rounded ${isMe ? 'bg-blue-700 hover:bg-blue-800' : 'bg-white hover:bg-gray-50'} transition-colors`}>
-                                                <FileText size={20} />
-                                                <span className="underline text-sm">View PDF</span>
+                                            <a href={msg.attachmentUrl} target="_blank" rel="noopener noreferrer" className={`flex items-center gap-2 p-3 rounded-md border ${isMe ? 'bg-teal-50 border-teal-200' : 'bg-slate-50 border-slate-200'} transition-colors`}>
+                                                <div className="bg-red-500 text-white p-1.5 rounded">
+                                                    <FileText size={16} />
+                                                </div>
+                                                <div className="flex flex-col">
+                                                    <span className="font-medium text-xs truncate max-w-[150px]">Document.pdf</span>
+                                                    <span className="text-[10px] opacity-70">Tap to view</span>
+                                                </div>
                                             </a>
                                         ) : (
-                                            <img src={msg.attachmentUrl} alt="Attachment" className="max-w-full rounded-md border border-gray-200" style={{ maxHeight: '200px' }} />
+                                            <div className="rounded-lg overflow-hidden border border-black/10">
+                                                <img src={msg.attachmentUrl} alt="Attachment" className="max-w-full h-auto object-cover" style={{ maxHeight: '200px' }} />
+                                            </div>
                                         )}
                                     </div>
                                 )}
-                            </div>
-                            <div className="flex items-center gap-1 mt-1">
-                                <span className="text-[10px] text-gray-400">{new Date(msg.createdAt).toLocaleTimeString()}</span>
-                                {isMe && (
-                                    <>
-                                        {msg.status === 'PENDING' && <Clock size={12} className="text-gray-400" />}
-                                        {msg.status === 'SENT' && <Check size={12} className="text-gray-400" />}
-                                        {msg.status === 'DELIVERED' && <CheckCheck size={12} className="text-gray-400" />}
-                                        {msg.status === 'READ' && <CheckCheck size={12} className="text-blue-500" />}
-                                        {msg.status === 'FAILED' && (
-                                            <div className="flex items-center gap-1">
-                                                <AlertCircle size={12} className="text-red-500" />
-                                                <button
-                                                    onClick={() => handleSend(msg.attachmentUrl, undefined, msg.content)}
-                                                    className="text-[10px] text-red-500 underline hover:text-red-600"
-                                                >
-                                                    Retry
-                                                </button>
-                                            </div>
-                                        )}
-                                    </>
-                                )}
+
+                                <div className={`flex items-center justify-end gap-1 mt-1 text-[11px] ${isMe ? 'text-teal-800/60' : 'text-slate-400'}`}>
+                                    <span>{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                    {isMe && (
+                                        <span className="ml-0.5">
+                                            {msg.status === 'PENDING' && <Clock size={12} />}
+                                            {msg.status === 'SENT' && <Check size={12} />}
+                                            {msg.status === 'DELIVERED' && <CheckCheck size={12} />}
+                                            {msg.status === 'READ' && <CheckCheck size={12} className="text-blue-500" />}
+                                            {msg.status === 'FAILED' && <AlertCircle size={12} className="text-red-500" />}
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     )
                 })}
                 {data?.getMessages.length === 0 && (
-                    <div className="text-center text-gray-400 my-auto italic">No messages yet. Start the conversation!</div>
+                    <div className="flex flex-col items-center justify-center h-full text-slate-400 opacity-60">
+                        <div className="bg-slate-200 p-4 rounded-full mb-2">
+                            <Lock className="w-6 h-6 text-slate-400" />
+                        </div>
+                        <p className="text-sm">Messages are end-to-end encrypted.</p>
+                        <p className="text-xs">Start the consultation by saying hello.</p>
+                    </div>
                 )}
             </div>
-            <div className="flex-none p-4 pb-8 md:pb-4 bg-white border-t md:rounded-b shadow-sm gap-2 flex flex-col">
-                <div className="flex gap-2 items-center">
+
+            {/* Input Area */}
+            <div className="p-3 bg-white border-t border-slate-200 z-10">
+                <div className="flex items-end gap-2 max-w-4xl mx-auto">
                     <input
                         type="file"
                         ref={fileInputRef}
@@ -277,20 +310,37 @@ function ChatRoom({ roomId }: { roomId: string }) {
                     />
                     <button
                         onClick={() => fileInputRef.current?.click()}
-                        className="p-3 text-gray-500 hover:bg-gray-100 rounded-full transition-colors"
+                        className="p-2.5 text-slate-500 hover:bg-slate-100 rounded-full transition-colors mb-0.5"
                         title="Attach file"
                         disabled={isUploading}
                     >
-                        {isUploading ? <div className="animate-spin h-5 w-5 border-2 border-gray-500 border-t-transparent rounded-full" /> : <Paperclip size={20} />}
+                        {isUploading ? <div className="animate-spin h-5 w-5 border-2 border-teal-500 border-t-transparent rounded-full" /> : <Paperclip size={22} />}
                     </button>
-                    <input
-                        className="flex-1 border p-3 rounded-lg text-black focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm md:text-base"
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                        placeholder="Type a message..."
-                    />
-                    <button onClick={() => handleSend()} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium">Send</button>
+
+                    <div className="flex-1 bg-slate-100 rounded-2xl flex items-center border border-transparent focus-within:bg-white focus-within:border-teal-500 focus-within:ring-1 focus-within:ring-teal-500 transition-all">
+                        <input
+                            className="flex-1 bg-transparent border-none px-4 py-3 focus:outline-none text-slate-800 placeholder-slate-400 max-h-32 min-h-[44px]"
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                            placeholder="Type your health concern..."
+                        />
+                    </div>
+
+                    <button
+                        onClick={() => handleSend()}
+                        disabled={!input.trim() && !isUploading}
+                        className={`p-3 rounded-full transition-all flex items-center justify-center mb-0.5 shadow-sm
+                            ${input.trim()
+                                ? 'bg-teal-600 hover:bg-teal-700 text-white transform hover:scale-105'
+                                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                            }
+                        `}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 ml-0.5"> {/* Send Icon */}
+                            <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
+                        </svg>
+                    </button>
                 </div>
             </div>
         </div>
