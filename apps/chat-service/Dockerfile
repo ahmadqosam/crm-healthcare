@@ -11,11 +11,9 @@ COPY nest-cli.json ./
 RUN npm ci
 
 # Copy source
+# Copy source
 COPY apps/chat-service apps/chat-service
 
-COPY apps/gateway apps/gateway
-COPY apps/auth-service apps/auth-service
-COPY . .
 
 # Generate Prisma Client
 RUN npx prisma generate --schema apps/chat-service/prisma/schema.prisma

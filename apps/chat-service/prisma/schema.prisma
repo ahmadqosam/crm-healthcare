@@ -26,6 +26,8 @@ model Message {
   attachmentUrl String?
   status     MessageStatus @default(PENDING)
   createdAt  DateTime @default(now())
+
+  @@index([chatRoomId, createdAt])
 }
 
 enum MessageStatus {

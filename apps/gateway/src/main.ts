@@ -7,8 +7,10 @@ async function bootstrap() {
   app.enableCors({
     origin: ['http://localhost:4000', 'http://localhost:4001'],
     credentials: true,
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders: 'Content-Type, Accept, Authorization',
   });
-  await app.listen(3000);
+  await app.listen(3000, '0.0.0.0');
   console.log(`Gateway is running on: http://localhost:3000/graphql`);
 }
 bootstrap();

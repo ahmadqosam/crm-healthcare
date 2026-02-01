@@ -31,7 +31,7 @@ async function bootstrap() {
   await app.startAllMicroservices();
 
   const port = process.env.CHAT_PORT || 3002;
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
   console.log(`Chat Service is running on: http://localhost:${port}/graphql`);
 }
 bootstrap();

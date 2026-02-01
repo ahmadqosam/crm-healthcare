@@ -1,4 +1,4 @@
-import { Resolver, Mutation, Query, Args, Subscription } from '@nestjs/graphql';
+import { Resolver, Mutation, Query, Args, Subscription, Int } from '@nestjs/graphql';
 import { ChatService } from './chat-service.service';
 import { ChatRoom, Message, SendMessageInput, SendMessageResponse } from './chat.dto';
 import { Inject, UseGuards } from '@nestjs/common';
@@ -38,8 +38,12 @@ export class ChatServiceResolver {
 
     @Query(() => [Message])
     @UseGuards(JwtAuthGuard)
-    async getMessages(@Args('chatRoomId') chatRoomId: string): Promise<Message[]> {
-        return this.chatService.getMessages(chatRoomId);
+    async getMessages(
+        @Args('chatRoomId') chatRoomId: string,
+        @Args('limit', { type: () => Int, nullable: true, defaultValue: 50 }) limit: number,
+        @Args('cursor', { nullable: true }) cursor?: string,
+    ): Promise<Message[]> {
+        return this.chatService.getMessages(chatRoomId, limit || 50, cursor);
     }
 
     @Mutation(() => ChatRoom)

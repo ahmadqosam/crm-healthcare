@@ -43,7 +43,7 @@ type Mutation {
 
 type Query {
   getChats: [ChatRoom!]!
-  getMessages(chatRoomId: String!): [Message!]!
+  getMessages(chatRoomId: String!, cursor: String, limit: Int! = 50): [Message!]!
 }
 
 input SendMessageInput {

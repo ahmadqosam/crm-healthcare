@@ -23,8 +23,8 @@ const GET_CHATS = gql`
 `;
 
 const GET_MESSAGES = gql`
-  query GetMessages($roomId: String!) {
-    getMessages(chatRoomId: $roomId) {
+  query GetMessages($roomId: String!, $limit: Int, $cursor: String) {
+    getMessages(chatRoomId: $roomId, limit: $limit, cursor: $cursor) {
       id
       senderId
       content

@@ -74,11 +74,19 @@ export class ChatService {
     }
   }
 
-  async getMessages(chatRoomId: string) {
-    const messages = await this.prisma.message.findMany({
+  async getMessages(chatRoomId: string, limit: number = 50, cursor?: string) {
+    const options: any = {
       where: { chatRoomId },
+      take: -limit, // Fetch from the end (newest first)
       orderBy: { createdAt: 'asc' },
-    });
+    };
+
+    if (cursor) {
+      options.cursor = { id: cursor };
+      options.skip = 1;
+    }
+
+    const messages = await this.prisma.message.findMany(options);
     return messages as any;
   }
 
