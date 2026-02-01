@@ -1,0 +1,37 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("CHAT_DATABASE_URL")
+}
+
+model ChatRoom {
+  id        String    @id @default(uuid())
+  customerEmail String   // Simplified linkage to Auth Service user
+  status    String    @default("OPEN") // OPEN, CLOSED
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+}
+
+model Message {
+  id         String   @id @default(uuid())
+  chatRoomId String
+  chatRoom   ChatRoom @relation(fields: [chatRoomId], references: [id])
+  senderId   String   // User ID
+  content    String
+  attachmentUrl String?
+  status     MessageStatus @default(PENDING)
+  createdAt  DateTime @default(now())
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
