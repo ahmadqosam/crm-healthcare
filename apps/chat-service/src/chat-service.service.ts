@@ -1,13 +1,12 @@
-import { Injectable } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
+import { Injectable, Inject } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
 import { PrismaService } from './prisma.service';
 
 @Injectable()
 export class ChatService {
   constructor(
     private prisma: PrismaService,
-    @InjectQueue('message-queue') private messageQueue: Queue,
+    @Inject('CHAT_SERVICE') private readonly client: ClientProxy,
   ) { }
 
   async sendMessage(senderId: string, chatRoomId: string, content: string, attachmentUrl?: string | null) {
@@ -23,7 +22,7 @@ export class ChatService {
       },
     });
 
-    // 2. Add to Redis Queue (Producer)
+    // 2. Add to Redis Queue (Producer) via RabbitMQ
     const payload = {
       messageId: message.id,
       senderId,
@@ -33,15 +32,7 @@ export class ChatService {
       createdAt: message.createdAt
     };
 
-    await this.messageQueue.add('new-message', payload, {
-      removeOnComplete: true,
-      removeOnFail: false, // Keep failed jobs in the "failed" set (DLQ)
-      attempts: 3,
-      backoff: {
-        type: 'exponential',
-        delay: 2000,
-      },
-    });
+    this.client.emit('new-message', payload);
 
     console.log('ChatService.sendMessage result:', JSON.stringify(message, null, 2));
     return message as any;

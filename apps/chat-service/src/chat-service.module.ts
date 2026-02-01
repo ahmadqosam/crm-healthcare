@@ -1,9 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ChatService } from './chat-service.service';
 import { ChatServiceResolver } from './chat-service.resolver';
-import { ChatConsumer } from './chat.consumer';
+import { ChatController } from './chat.controller';
 import { PrismaService } from './prisma.service';
-import { BullModule } from '@nestjs/bullmq';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloFederationDriver, ApolloFederationDriverConfig } from '@nestjs/apollo';
 import { RedisPubSub } from 'graphql-redis-subscriptions';
@@ -11,6 +10,8 @@ import { join } from 'path';
 import { PassportModule } from '@nestjs/passport';
 import { JwtModule } from '@nestjs/jwt';
 import { JwtStrategy } from './jwt.strategy';
+import { ClientsModule, Transport } from '@nestjs/microservices';
+import { RabbitMQSetupService } from './rabbitmq-setup.service';
 
 @Module({
   imports: [
@@ -19,15 +20,23 @@ import { JwtStrategy } from './jwt.strategy';
       secret: process.env.JWT_SECRET || 'supersecretkey',
       signOptions: { expiresIn: '1d' },
     }),
-    BullModule.forRoot({
-      connection: {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT || '6379'),
+    ClientsModule.register([
+      {
+        name: 'CHAT_SERVICE',
+        transport: Transport.RMQ,
+        options: {
+          urls: [`amqp://${process.env.RABBITMQ_USER || 'guest'}:${process.env.RABBITMQ_PASS || 'guest'}@${process.env.RABBITMQ_HOST || 'localhost'}:5672`],
+          queue: 'chat_queue',
+          queueOptions: {
+            durable: true,
+            arguments: {
+              'x-dead-letter-exchange': 'chat_dlx',
+              'x-dead-letter-routing-key': 'chat_dlq',
+            },
+          },
+        },
       },
-    }),
-    BullModule.registerQueue({
-      name: 'message-queue',
-    }),
+    ]),
     GraphQLModule.forRoot<ApolloFederationDriverConfig>({
       driver: ApolloFederationDriver,
       autoSchemaFile: {
@@ -41,13 +50,13 @@ import { JwtStrategy } from './jwt.strategy';
       },
     }),
   ],
-  controllers: [],
+  controllers: [ChatController],
   providers: [
     ChatService,
     ChatServiceResolver,
     JwtStrategy,
-    ChatConsumer,
     PrismaService,
+    RabbitMQSetupService,
     {
       provide: 'PUB_SUB',
       useFactory: () => {

@@ -19,19 +19,51 @@ const authLink = setContext((_, { headers }) => {
     };
 });
 
-const wsLink = typeof window !== 'undefined'
-    ? new GraphQLWsLink(createClient({
+import { makeVar } from '@apollo/client';
+
+export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected';
+export const wsStatusVar = makeVar<ConnectionStatus>('disconnected');
+
+// Refactoring to capture client instance
+let wsClient: ReturnType<typeof createClient> | null = null;
+
+if (typeof window !== 'undefined') {
+    wsClient = createClient({
         url: 'ws://localhost:3002/graphql',
+        retryAttempts: Infinity,
+        keepAlive: 10_000, // 10 seconds keep-alive
+        shouldRetry: () => true,
         connectionParams: () => {
             const token = getToken();
             return {
                 Authorization: token ? `Bearer ${token}` : '',
             };
         },
-    }))
+        on: {
+            connected: () => wsStatusVar('connected'),
+            connecting: () => wsStatusVar('connecting'),
+            closed: () => wsStatusVar('disconnected'),
+            error: () => wsStatusVar('disconnected'),
+        },
+    });
+}
+
+const finalWsLink = typeof window !== 'undefined' && wsClient
+    ? new GraphQLWsLink(wsClient)
     : null;
 
-const splitLink = typeof window !== 'undefined' && wsLink
+if (typeof window !== 'undefined' && wsClient) {
+    const handleRevisit = () => {
+        if (document.visibilityState === 'visible') {
+            wsClient?.terminate();
+        }
+    };
+
+    window.addEventListener('visibilitychange', handleRevisit);
+    window.addEventListener('focus', handleRevisit);
+}
+
+const splitLink = typeof window !== 'undefined' && finalWsLink
     ? split(
         ({ query }) => {
             const definition = getMainDefinition(query);
@@ -40,7 +72,7 @@ const splitLink = typeof window !== 'undefined' && wsLink
                 definition.operation === 'subscription'
             );
         },
-        wsLink,
+        finalWsLink,
         authLink.concat(httpLink),
     )
     : authLink.concat(httpLink);

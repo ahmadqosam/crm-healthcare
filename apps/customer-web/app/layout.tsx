@@ -3,6 +3,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "../components/Providers";
 
+import { ConnectionStatus } from "../components/ConnectionStatus";
+import React from 'react';
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -30,6 +33,7 @@ export default function RootLayout({
       >
         <Providers>
           {children}
+          <ConnectionStatus />
         </Providers>
       </body>
     </html>

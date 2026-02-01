@@ -3,15 +3,17 @@ import { INestApplication, ExecutionContext } from '@nestjs/common';
 import request from 'supertest';
 import { ChatService } from './../src/chat-service.service';
 import { ChatServiceResolver } from './../src/chat-service.resolver';
-import { ChatConsumer } from './../src/chat.consumer';
-import { getQueueToken } from '@nestjs/bullmq';
+// import { ChatConsumer } from './../src/chat.consumer'; // Removed
+import { ChatController } from './../src/chat.controller';
+
 import { PrismaService } from './../src/prisma.service';
 import { JwtAuthGuard } from './../src/jwt-auth.guard';
 import { GqlExecutionContext } from '@nestjs/graphql';
+import { RmqContext } from '@nestjs/microservices';
 
 // --- Mocks ---
-const mockQueue = {
-  add: jest.fn(),
+const mockClient = {
+  emit: jest.fn(),
 };
 
 const mockPrisma = {
@@ -51,10 +53,9 @@ import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloFederationDriver, ApolloFederationDriverConfig } from '@nestjs/apollo';
 import { join } from 'path';
 
-// ... (mocks remain same)
-
 describe('ChatService Flow (Integration)', () => {
   let app: INestApplication;
+  let chatController: ChatController;
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -72,10 +73,10 @@ describe('ChatService Flow (Integration)', () => {
       providers: [
         ChatService,
         ChatServiceResolver,
-        ChatConsumer,
+        ChatController, // Now provided here for access
         {
-          provide: getQueueToken('message-queue'),
-          useValue: mockQueue,
+          provide: 'CHAT_SERVICE', // ClientProxy token
+          useValue: mockClient,
         },
         {
           provide: PrismaService,
@@ -93,6 +94,8 @@ describe('ChatService Flow (Integration)', () => {
 
     app = moduleFixture.createNestApplication();
     await app.init();
+
+    chatController = moduleFixture.get<ChatController>(ChatController);
   });
 
   afterAll(async () => {
@@ -143,11 +146,11 @@ describe('ChatService Flow (Integration)', () => {
       })
     }));
 
-    // Verify Queue Call
-    expect(mockQueue.add).toHaveBeenCalledWith('new-message', expect.objectContaining({
+    // Verify Queue Call (ClientProxy.emit)
+    expect(mockClient.emit).toHaveBeenCalledWith('new-message', expect.objectContaining({
       content: 'Hello Customer',
       senderId: 'agent@test.com'
-    }), expect.anything());
+    }));
   });
 
 
@@ -211,9 +214,9 @@ describe('ChatService Flow (Integration)', () => {
       .expect(200);
 
     // Verify Queue Payload contains attachment
-    expect(mockQueue.add).toHaveBeenCalledWith('new-message', expect.objectContaining({
+    expect(mockClient.emit).toHaveBeenCalledWith('new-message', expect.objectContaining({
       attachmentUrl: 'http://test.com/file.pdf',
-    }), expect.anything());
+    }));
   });
 
   // --- Scenario 4: Agent retrieves chats ---
@@ -240,10 +243,6 @@ describe('ChatService Flow (Integration)', () => {
       .expect(200);
 
     expect(res.body.data.getChats).toHaveLength(2);
-    // Verify findMany was called WITHOUT 'where' clause (or rather, the agent logic branch)
-    // The service implementation for agent usually has no where clause on customerEmail
-    // expect(mockPrisma.chatRoom.findMany).toHaveBeenCalledWith(expect.not.objectContaining({ where: { customerEmail: expect.anything() } }));
-    // Wait, the args differ. Let's just trust the length for now or check the spy if strict.
   });
 
   // --- Scenario 5: Customer retrieves chats ---
@@ -310,46 +309,34 @@ describe('ChatService Flow (Integration)', () => {
     const res = await request(app.getHttpServer())
       .post('/graphql')
       .send({ query: deleteMutation })
-      .expect(200); // GraphQL often returns 200 even with errors in body
+      .expect(200);
 
     expect(res.body.errors).toBeDefined();
-    // Expect internal server error or specific message, usually mapped from the throw Error('Unauthorized')
-    // We can assume at least one error exists.
     expect(res.body.data).toBeNull();
   });
 
   // --- Scenario 8: Message Reception (Subscription Simulation) ---
-  // Note: We can't easily test the full WS connection with supertest, 
-  // but we can verify that the ChatConsumer logic *would* publish to PubSub if we run it manually.
-  // We'll import the ChatConsumer class and test it directly as a unit/integration mix.
   it('Scenario 8: Message Reception (Subscription Publish)', async () => {
-    // We need to resolve the ChatConsumer from the testing module
-    // But ChatConsumer is a provider. We can get it from 'app'.
 
-    // NOTE: ChatConsumer is NOT exported in module context for 'get', but it is a provider.
-    // However, since we want to test the full flow, we can just trigger the Queue Logic if we could, 
-    // but the Queue is mocked.
-    // Instead, let's manually invoke the `process` method of the ChatConsumer 
-    // to verify it calls PubSub.publish. But we need access to the instance.
+    // Mock RmqContext
+    const mockChannel = {
+      ack: jest.fn(),
+      nack: jest.fn(),
+    };
 
-    // We didn't export ChatConsumer in the module fixture? 
-    // chat-service.module.ts provides it. So we should be able to get it.
+    // Note: getMessage() returns the original raw message
+    const mockRmqContext = {
+      getChannelRef: () => mockChannel,
+      getMessage: () => ({}), // dummy original msg
+    } as unknown as RmqContext;
 
-    // 1. Get Consumer instance
-    // We need to import ChatConsumer class to use as token
-    const { ChatConsumer } = require('./../src/chat.consumer');
-    const consumer = app.get(ChatConsumer);
-
-    // 2. Simulate Job
-    const job = {
-      data: {
-        messageId: 'msg-100',
-        chatRoomId: 'room-100',
-        senderId: 'agent@test.com',
-        content: 'Test Msg',
-        createdAt: new Date().toISOString()
-      },
-      id: 'job-1'
+    // Simulate Data Payload
+    const data = {
+      messageId: 'msg-100',
+      chatRoomId: 'room-100',
+      senderId: 'agent@test.com',
+      content: 'Test Msg',
+      createdAt: new Date().toISOString()
     };
 
     mockPrisma.message.update.mockResolvedValue({
@@ -361,10 +348,10 @@ describe('ChatService Flow (Integration)', () => {
       createdAt: new Date(),
     });
 
-    // 3. Run Process
-    await consumer.process(job as any);
+    // Run Controller Handler directly
+    await chatController.handleNewMessage(data, mockRmqContext);
 
-    // 4. Verify PubSub Publish
+    // Verify PubSub Publish
     expect(mockPubSub.publish).toHaveBeenCalledWith(
       'messageReceived',
       expect.objectContaining({
@@ -374,6 +361,9 @@ describe('ChatService Flow (Integration)', () => {
         })
       })
     );
+
+    // Verify Ack
+    expect(mockChannel.ack).toHaveBeenCalled();
   });
 
 });
