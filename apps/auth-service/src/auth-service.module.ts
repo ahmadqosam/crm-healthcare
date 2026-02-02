@@ -6,9 +6,12 @@ import { JwtModule } from '@nestjs/jwt';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloFederationDriver, ApolloFederationDriverConfig } from '@nestjs/apollo';
 import { join } from 'path';
+import { RedisModule } from './redis.module';
+import { RefreshTokenRepository } from './refresh-token.repository';
 
 @Module({
   imports: [
+    RedisModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'supersecretkey',
       signOptions: { expiresIn: '1d' },
@@ -24,6 +27,6 @@ import { join } from 'path';
     }),
   ],
   controllers: [],
-  providers: [AuthService, AuthServiceResolver, PrismaService],
+  providers: [AuthService, AuthServiceResolver, PrismaService, RefreshTokenRepository],
 })
 export class AuthServiceModule { }

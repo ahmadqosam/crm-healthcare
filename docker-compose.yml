@@ -63,8 +63,20 @@ services:
     environment:
       DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-crm_db}?schema=public
       JWT_SECRET: ${JWT_SECRET:-supersecretkey}
+      REDIS_HOST: auth-redis
+      REDIS_PORT: 6379
     depends_on:
       - postgres
+      - auth-redis
+    networks:
+      - crm-network
+
+  auth-redis:
+    image: redis:7-alpine
+    container_name: crm_auth_redis
+    ports:
+      - "6380:6379"
+    restart: always
     networks:
       - crm-network
 

@@ -4,12 +4,14 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from './prisma.service';
 import { RegisterInput, LoginInput, AuthResponse, User, UserRole } from './auth.dto';
 import { User as PrismaUser } from './generated/client'; // Type from generated client
+import { RefreshTokenRepository } from './refresh-token.repository';
 
 @Injectable()
 export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
+    private refreshTokenRepo: RefreshTokenRepository,
   ) { }
 
   async register(input: RegisterInput): Promise<AuthResponse> {
@@ -31,10 +33,10 @@ export class AuthService {
       },
     });
 
-    const token = this.generateToken(user);
+    const tokens = await this.generateTokens(user);
 
     return {
-      accessToken: token,
+      ...tokens,
       user: this.mapToUserDto(user),
     };
   }
@@ -54,10 +56,10 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const token = this.generateToken(user);
+    const tokens = await this.generateTokens(user);
 
     return {
-      accessToken: token,
+      ...tokens,
       user: this.mapToUserDto(user),
     };
   }
@@ -79,9 +81,53 @@ export class AuthService {
     }
   }
 
-  private generateToken(user: PrismaUser): string {
+  async refreshToken(token: string): Promise<AuthResponse> {
+    try {
+      const payload = this.jwtService.verify(token);
+      const userId = payload.sub;
+
+      const storedToken = await this.refreshTokenRepo.find(userId);
+
+      if (!storedToken || storedToken !== token) {
+        throw new UnauthorizedException('Invalid refresh token');
+      }
+
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (!user) {
+        throw new UnauthorizedException('User not found');
+      }
+
+      // Rotate tokens
+      const newTokens = await this.generateTokens(user);
+
+      return {
+        ...newTokens,
+        user: this.mapToUserDto(user),
+      };
+    } catch (e) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+  }
+
+  async logout(userId: string): Promise<boolean> {
+    await this.refreshTokenRepo.delete(userId);
+    return true;
+  }
+
+  private async generateTokens(user: PrismaUser): Promise<{ accessToken: string; refreshToken: string }> {
     const payload = { sub: user.id, email: user.email, role: user.role };
-    return this.jwtService.sign(payload);
+
+    const [accessToken, refreshToken] = await Promise.all([
+      this.jwtService.signAsync(payload, { expiresIn: '15m' }), // Short lived access token
+      this.jwtService.signAsync(payload, { expiresIn: '7d' }),  // Long lived refresh token
+    ]);
+
+    await this.refreshTokenRepo.save(user.id, refreshToken);
+
+    return { accessToken, refreshToken };
   }
 
   private mapToUserDto(user: PrismaUser): User {

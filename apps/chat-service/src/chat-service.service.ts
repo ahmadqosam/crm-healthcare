@@ -242,23 +242,27 @@ export class ChatService {
     // 2. Process Fallback List (Failed DB Writes from Optimistic Sends)
     const fallbackMessages = await this.redis.lrange('chat:fallback:messages', 0, 49);
     if (fallbackMessages.length > 0) {
-      this.logger.log(`Found ${fallbackMessages.length} messages in Fallback List. Syncing to DB...`);
-      for (const msgString of fallbackMessages) {
-        const msg = JSON.parse(msgString);
-        try {
-          // Check if exists first to avoid duplicate key error if it did succeed but timed out
-          const exists = await this.prisma.message.findUnique({ where: { id: msg.id } });
-          if (!exists) {
-            await this.prisma.message.create({ data: msg });
-          }
-          // Remove from list (This is simple logic; ideally usage of LREM/LPOP carefully)
-          // For simplicity/safety, we risk re-processing if we don't LPOP individually.
-          // Let's LREM this specific item.
-          await this.redis.lrem('chat:fallback:messages', 1, msgString);
-          this.logger.log(`Synced message ${msg.id} to DB.`);
-        } catch (error) {
-          this.logger.error(`Failed to sync fallback message ${msg.id}`, error);
-        }
+      this.logger.log(`Found ${fallbackMessages.length} messages in Fallback List. Syncing to DB (Bulk)...`);
+
+      const messagesToSync = fallbackMessages.map(msg => JSON.parse(msg));
+
+      try {
+        // Bulk Insert (skips duplicates automatically)
+        const result = await this.prisma.message.createMany({
+          data: messagesToSync,
+          skipDuplicates: true,
+        });
+
+        this.logger.log(`Bulk synced ${result.count} messages to DB.`);
+
+        // Remove processed messages from Redis
+        // Since we processed the first N messages, we can safely LTRIM them.
+        // Wait! LTRIM keeps the range. LTRIM key 50 -1 keeps from index 50 to end.
+        // So we remove 0 to length-1.
+        await this.redis.ltrim('chat:fallback:messages', fallbackMessages.length, -1);
+
+      } catch (error) {
+        this.logger.error('Failed to bulk sync messages', error);
       }
     }
 

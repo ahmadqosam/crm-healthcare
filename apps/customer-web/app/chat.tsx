@@ -231,6 +231,25 @@ function ChatRoom({ roomId }: { roomId: string }) {
                     <span className="text-[10px] uppercase font-bold text-teal-600 bg-teal-50 px-2 py-1 rounded-full border border-teal-100 flex items-center gap-1">
                         <Lock size={10} /> Encrypted
                     </span>
+                    <button
+                        onClick={async () => {
+                            if (confirm('Are you sure you want to logout?')) {
+                                try {
+                                    // Decode token to get userId is not strictly needed if backend infers from context, 
+                                    // but our mutation requires userId. 
+                                    // For now, simpler: just client-side logout.
+                                    // Ideally call: logout(variables: { userId: ... })
+                                    const { removeToken } = await import('../lib/auth');
+                                    removeToken();
+                                    window.location.reload();
+                                } catch (e) { console.error(e); }
+                            }
+                        }}
+                        className="text-slate-400 hover:text-red-500 transition-colors"
+                        title="Logout"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-log-out"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" x2="9" y1="12" y2="12" /></svg>
+                    </button>
                 </div>
             </div>
 

@@ -1,9 +1,10 @@
-import { ApolloClient, InMemoryCache, HttpLink, split } from '@apollo/client';
+import { ApolloClient, InMemoryCache, HttpLink, split, from, Observable } from '@apollo/client';
 import { setContext } from '@apollo/client/link/context';
 import { GraphQLWsLink } from '@apollo/client/link/subscriptions';
 import { createClient } from 'graphql-ws';
 import { getMainDefinition } from '@apollo/client/utilities';
-import { getToken } from './auth';
+import { onError } from '@apollo/client/link/error';
+import { getToken, getRefreshToken, setToken, setRefreshToken, removeToken } from './auth';
 
 const httpLink = new HttpLink({
     uri: 'http://localhost:3000/graphql',
@@ -19,6 +20,73 @@ const authLink = setContext((_, { headers }) => {
     };
 });
 
+const errorLink = onError(({ graphQLErrors, operation, forward }) => {
+    if (graphQLErrors) {
+        for (const err of graphQLErrors) {
+            if (err.extensions?.code === 'UNAUTHENTICATED') {
+                return new Observable(observer => {
+                    const refreshToken = getRefreshToken();
+                    if (!refreshToken) {
+                        removeToken();
+                        window.location.reload();
+                        return;
+                    }
+
+                    // Perform refresh logic
+                    fetch('http://localhost:3000/graphql', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            query: `
+                                mutation RefreshToken($token: String!) {
+                                    refreshToken(token: $token) {
+                                        accessToken
+                                        refreshToken
+                                    }
+                                }
+                            `,
+                            variables: { token: refreshToken }
+                        })
+                    })
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.data?.refreshToken) {
+                                const { accessToken, refreshToken: newRefreshToken } = data.data.refreshToken;
+                                setToken(accessToken);
+                                setRefreshToken(newRefreshToken);
+
+                                // Retry the failed request
+                                const oldHeaders = operation.getContext().headers;
+                                operation.setContext({
+                                    headers: {
+                                        ...oldHeaders,
+                                        authorization: `Bearer ${accessToken}`,
+                                    },
+                                });
+
+                                const subscriber = {
+                                    next: observer.next.bind(observer),
+                                    error: observer.error.bind(observer),
+                                    complete: observer.complete.bind(observer),
+                                };
+
+                                forward(operation).subscribe(subscriber);
+                            } else {
+                                // Refresh failed
+                                removeToken();
+                                window.location.reload();
+                            }
+                        })
+                        .catch(() => {
+                            removeToken();
+                            window.location.reload();
+                        });
+                });
+            }
+        }
+    }
+});
+
 import { makeVar } from '@apollo/client';
 
 export type ConnectionStatus = 'connected' | 'connecting' | 'disconnected';
@@ -31,7 +99,7 @@ let wsClient: ReturnType<typeof createClient> | null = null;
 
 if (typeof window !== 'undefined') {
     wsClient = createClient({
-        url: 'ws://localhost:3002/graphql',
+        url: 'ws://localhost:3002/graphql', // Direct to Chat Service for subscriptions (or use Gateway if WS supported)
         retryAttempts: Infinity,
         keepAlive: 10_000,
         shouldRetry: () => true,
@@ -79,9 +147,9 @@ const splitLink = typeof window !== 'undefined' && finalWsLink
             );
         },
         finalWsLink,
-        authLink.concat(httpLink),
+        from([errorLink, authLink, httpLink]), // Chain error > auth > http
     )
-    : authLink.concat(httpLink);
+    : from([errorLink, authLink, httpLink]);
 
 export const client = new ApolloClient({
     link: splitLink,
