@@ -86,6 +86,21 @@ describe('ChatService Flow (Integration)', () => {
           provide: 'PUB_SUB',
           useValue: mockPubSub,
         },
+        {
+          provide: 'REDIS_CLIENT',
+          useValue: {
+            lpush: jest.fn(),
+            ltrim: jest.fn(),
+            expire: jest.fn(),
+            lrange: jest.fn().mockResolvedValue([]),
+            pipeline: jest.fn().mockReturnValue({
+              lpush: jest.fn(),
+              ltrim: jest.fn(),
+              expire: jest.fn(),
+              exec: jest.fn(),
+            }),
+          },
+        },
       ],
     })
       .overrideGuard(JwtAuthGuard)

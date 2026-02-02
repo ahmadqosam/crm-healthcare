@@ -13,10 +13,6 @@ RUN npm ci
 # Copy source
 COPY apps/gateway apps/gateway
 
-COPY apps/auth-service apps/auth-service
-COPY apps/chat-service apps/chat-service
-COPY . .
-
 # Build
 RUN npm run build gateway
 

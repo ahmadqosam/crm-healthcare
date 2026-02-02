@@ -11,15 +11,8 @@ COPY nest-cli.json ./
 RUN npm ci
 
 # Copy source
+# Copy source
 COPY apps/auth-service apps/auth-service
-
-# Note: we might not need apps/crm-healthcare but copying root context is safer for monorepo quirks unless scoped
-
-COPY apps/gateway apps/gateway
-COPY apps/chat-service apps/chat-service
-# In a real monorepo build we would only copy what's needed, but for simplicity in this setup we copy all for now or scope it. 
-# actually let's stick to copying everything to ensure simple build:
-COPY . .
 
 # Generate Prisma Client
 RUN npx prisma generate --schema apps/auth-service/prisma/schema.prisma

@@ -62,6 +62,21 @@ describe('ChatService Pagination (e2e)', () => {
                 {
                     provide: 'PUB_SUB',
                     useValue: mockPubSub,
+                },
+                {
+                    provide: 'REDIS_CLIENT',
+                    useValue: {
+                        lpush: jest.fn(),
+                        ltrim: jest.fn(),
+                        expire: jest.fn(),
+                        lrange: jest.fn().mockResolvedValue([]), // Always return empty to force DB hit in this test suite
+                        pipeline: jest.fn().mockReturnValue({
+                            lpush: jest.fn(),
+                            ltrim: jest.fn(),
+                            expire: jest.fn(),
+                            exec: jest.fn(),
+                        }),
+                    },
                 }
             ],
         })

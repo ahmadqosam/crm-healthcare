@@ -6,6 +6,7 @@ import { PrismaService } from './prisma.service';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloFederationDriver, ApolloFederationDriverConfig } from '@nestjs/apollo';
 import { RedisPubSub } from 'graphql-redis-subscriptions';
+import { Redis } from 'ioredis';
 import { join } from 'path';
 import { PassportModule } from '@nestjs/passport';
 import { JwtModule } from '@nestjs/jwt';
@@ -65,6 +66,15 @@ import { RabbitMQSetupService } from './rabbitmq-setup.service';
             host: process.env.REDIS_HOST || 'localhost',
             port: parseInt(process.env.REDIS_PORT || '6379'),
           },
+        });
+      },
+    },
+    {
+      provide: 'REDIS_CLIENT',
+      useFactory: () => {
+        return new Redis({
+          host: process.env.REDIS_HOST || 'localhost',
+          port: parseInt(process.env.REDIS_PORT || '6379'),
         });
       },
     },
