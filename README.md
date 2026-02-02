@@ -55,21 +55,42 @@ graph TD
     ChatService -- PubSub --> RedisChat
 ```
 
-## 🚀 Key Approaches
+## 🧠 Detailed Architecture & Design Decisions
 
-### 1. Authentication & Security
-- **Dual Token System**: Short-lived Access Tokens (15m) and Long-lived Refresh Tokens (7d).
-- **Token Rotation**: Refresh usage invalidates the old chain, preventing replay attacks.
-- **Dedicated Storage**: Refresh tokens are stored in a dedicated Redis instance (`auth-redis`) for performance and isolation.
+### 1. Message Processing & Write-Behind Strategy
+We utilize a **Write-Behind** pattern to decouple the critical path (sending a message) from the database write latency.
+- **Why**: Database writes are blocking and slow (10-100ms). Redis writes are near-instant (<1ms). By buffering in Redis queue, we ensure high throughput and low latency for the user.
+- **Async vs Sync Trade-off**: 
+    - *Sync (Traditional)*: High consistency but slower. A DB spike slows down every chat request.
+    - *Async (Our Approach)*: "Eventual Consistency". The user sees the message immediately (Optimistic UI + Redis PubSub). The DB is updated milliseconds later. Trade-off is potential data loss if the entire cache layer crashes before persistence (mitigated by redundancy).
+- **High Latency Mitigation**: If DB latency spikes, messages simply pile up in the Redis Queue/List without impacting the Sender's experience.
 
-### 2. High-Performance Chat (Write-Behind)
-- **Immediate Feedback**: Messages are "sent" to the client immediately via Redis PubSub.
-- **Async Persistence**: Messages are queued in Redis Lists and processed by a background worker to minimize DB write latency.
-- **Rescue Job**: A Cron job (`rescuePendingMessages`) runs periodically to pick up any messages that failed to persist or got stuck, ensuring 0% data loss.
+### 2. Reliability & Failure Mitigation
+- **Queue Downtime**: If the message queue (RabbitMQ/Redis) is down, the system would fail to send. 
+    - *Mitigation*: We implement a **"Rescue Job"** (Cron) that scans for messages stuck in `PENDING` state in the DB/Cache and re-queues them.
+- **DB Downtime/Latency**: 
+    - *Circuit Breaker*: If DB fails significantly, the consumer stops trying to write and pushes messages to a **Fallback Redis List**.
+    - *Recovery*: The Rescue Job later bulk-inserts these fallback messages when the DB recovers.
+- **Consumer Crashes**: We use **Manual Acknowledgement (Ack)**. If a consumer crashes while processing a message, the message is not Ack'd. The broker will redeliver it to another consumer instance.
 
-### 3. Resilience
-- **Dead Letter Queue (DLQ)**: Failed message processing moves items to a DLQ for review or retry.
-- **Circuit Breakers**: Implemented around DB operations to prevent cascading failures during high load.
+### 3. Dead Letter Queue (DLQ)
+- **Functionality**: If a message fails processing repeatedly (e.g., malformed data, permanent DB error) after 3 retries, it is moved to `chat_dlq`.
+- **Monitoring**: The Ops team monitors DLQ depth via dashboards (e.g., Grafana/CloudWatch).
+- **Resolution**:
+    - *Automated*: The Rescue Job periodically attempts to "Redrive" DLQ messages.
+    - *Manual*: Engineers can inspect the DLQ payload to debug schema issues.
+
+### 4. Ordering & Scalability
+- **Ordering Strategy**: We rely on Client-generated UUIDs and `createdAt` timestamps.
+    - *Reason*: In a distributed 10x scale environment, strictly ordered queues (FIFO) bottleneck throughput because they force serialization.
+    - *Trade-off*: Messages might arrive out of order (milliseconds). The Frontend is responsible for sorting by `createdAt`.
+- **10x Traffic Burst**: The Redis List acts as a buffer. Consumers take messages at their maximum sustainable rate (`prefetch_count`). The backlog grows temporarily but clears as traffic normalizes, protecting the DB from overload.
+
+### 5. Operational Access Control (Small Team)
+For a constrained team size, we enforce strict ease-of-management and security defaults:
+- **No Direct Prod DB Access**: Write access is restricted to CI/CD pipelines and Migration Scripts. Live interaction is via Read-Only replicas or Admin Dashboards.
+- **Secrets Management**: All sensitive keys (DB_URL, JWT_SECRET) are injected via Environment Variables (e.g., AWS Secrets Manager), never committed to code.
+- **Deployment**: Fully automated via Docker/K8s manifests. No manual SSH allowed for deployment tasks.
 
 ## 🏃‍♂️ Setup & Running
 

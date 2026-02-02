@@ -1,3 +1,12 @@
+import * as crypto from 'crypto';
+// Polyfill crypto for @nestjs/schedule
+if (!global.crypto) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (global as any).crypto = {
+    randomUUID: () => crypto.randomUUID()
+  };
+}
+
 import { NestFactory } from '@nestjs/core';
 import { ChatServiceModule } from './chat-service.module';
 

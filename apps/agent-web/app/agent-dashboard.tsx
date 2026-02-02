@@ -6,7 +6,7 @@ import { useQuery, useMutation, useSubscription } from '@apollo/client/react';
 import {
     Search, MoreVertical, Phone, Video,
     Paperclip, Mic, Smile, Send,
-    Check, CheckCheck, Clock, AlertCircle
+    Check, CheckCheck, Clock, AlertCircle, Trash2
 } from 'lucide-react';
 import { jwtDecode } from 'jwt-decode';
 import { getToken } from '../lib/auth';
@@ -80,6 +80,22 @@ const getAvatarColor = (str: string) => {
 export default function AgentDashboard() {
     const { data, loading, refetch } = useQuery(GET_CHATS);
     const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+    const [deleteChatRoom] = useMutation(DELETE_CHAT);
+
+    const handleDeleteChat = async (id: string) => {
+        try {
+            await deleteChatRoom({
+                variables: { id },
+                refetchQueries: [{ query: GET_CHATS }],
+            });
+            if (selectedRoomId === id) {
+                setSelectedRoomId(null);
+            }
+        } catch (error) {
+            console.error('Error deleting chat:', error);
+            alert('Failed to delete chat');
+        }
+    };
 
     return (
         <div className="flex h-screen bg-slate-50 overflow-hidden">
@@ -140,6 +156,18 @@ export default function AgentDashboard() {
                                             {/* Mocking last message for now as it's not in the list query efficiently yet */}
                                             {chat.status}
                                         </p>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (window.confirm('Are you sure you want to delete this chat?')) {
+                                                    handleDeleteChat(chat.id);
+                                                }
+                                            }}
+                                            className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors opacity-0 group-hover:opacity-100"
+                                            title="Delete Chat"
+                                        >
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
                                     </div>
                                 </div>
                             </div>

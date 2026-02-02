@@ -5,7 +5,7 @@ async function bootstrap() {
   const app = await NestFactory.create(GatewayModule);
   // Gateway typically runs on 3000
   app.enableCors({
-    origin: ['http://localhost:4000', 'http://localhost:4001'],
+    origin: true, // Allow all origins with credentials for development
     credentials: true,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     allowedHeaders: 'Content-Type, Accept, Authorization',
