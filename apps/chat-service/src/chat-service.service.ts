@@ -197,6 +197,12 @@ export class ChatService {
   @Cron(CronExpression.EVERY_MINUTE)
   async rescuePendingMessages() {
     this.logger.log('Running rescuePendingMessages job...');
+
+    if (!(await this.isDatabaseAvailable())) {
+      this.logger.warn('Database is down. Skipping rescue job to prevent retry exhaustion.');
+      return;
+    }
+
     const oneMinuteAgo = new Date(Date.now() - 60 * 1000);
 
     // Find messages that are still PENDING and created more than 1 minute ago
@@ -309,6 +315,16 @@ export class ChatService {
     } finally {
       if (channel) await channel.close().catch(() => { });
       if (connection) await connection.close().catch(() => { });
+    }
+  }
+
+  private async isDatabaseAvailable(): Promise<boolean> {
+    try {
+      await this.prisma.$queryRaw`SELECT 1`;
+      return true;
+    } catch (e) {
+      this.logger.error('Database Health Check Failed', e);
+      return false;
     }
   }
 }
