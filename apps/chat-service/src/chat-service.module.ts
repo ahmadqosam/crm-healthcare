@@ -14,8 +14,11 @@ import { JwtStrategy } from './jwt.strategy';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { RabbitMQSetupService } from './rabbitmq-setup.service';
 
+import { ScheduleModule } from '@nestjs/schedule';
+
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     PassportModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'supersecretkey',

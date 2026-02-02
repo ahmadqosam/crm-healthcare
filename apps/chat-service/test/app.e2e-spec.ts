@@ -56,11 +56,12 @@ import { join } from 'path';
 describe('ChatService Flow (Integration)', () => {
   let app: INestApplication;
   let chatController: ChatController;
+  let moduleFixture: TestingModule;
 
   beforeEach(async () => {
     jest.clearAllMocks();
 
-    const moduleFixture: TestingModule = await Test.createTestingModule({
+    moduleFixture = await Test.createTestingModule({
       imports: [
         GraphQLModule.forRoot<ApolloFederationDriverConfig>({
           driver: ApolloFederationDriver,
@@ -93,6 +94,8 @@ describe('ChatService Flow (Integration)', () => {
             ltrim: jest.fn(),
             expire: jest.fn(),
             lrange: jest.fn().mockResolvedValue([]),
+            rpush: jest.fn(), // Mock rpush
+            lrem: jest.fn(),  // Mock lrem
             pipeline: jest.fn().mockReturnValue({
               lpush: jest.fn(),
               ltrim: jest.fn(),
@@ -152,6 +155,15 @@ describe('ChatService Flow (Integration)', () => {
     expect(data.senderId).toEqual('agent@test.com');
     expect(data.status).toEqual('PENDING');
 
+    // Verify Queue Call (ClientProxy.emit)
+    expect(mockClient.emit).toHaveBeenCalledWith('new-message', expect.objectContaining({
+      content: 'Hello Customer',
+      senderId: 'agent@test.com'
+    }));
+
+    // Wait for async DB write (Write-Behind)
+    await new Promise(resolve => setTimeout(resolve, 100));
+
     // Verify DB Call
     expect(mockPrisma.message.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -160,12 +172,45 @@ describe('ChatService Flow (Integration)', () => {
         status: 'PENDING'
       })
     }));
+  });
 
-    // Verify Queue Call (ClientProxy.emit)
-    expect(mockClient.emit).toHaveBeenCalledWith('new-message', expect.objectContaining({
-      content: 'Hello Customer',
-      senderId: 'agent@test.com'
-    }));
+  // --- Scenario 1.1: High DB Latency (Fallback) ---
+  it('Scenario 1.1: High DB Latency (Fallback to Redis)', async () => {
+    mockUserContext = { userId: 'agent-123', email: 'agent@test.com', role: 'AGENT' };
+
+    const sendMessageMutation = `
+      mutation {
+        sendMessage(input: { chatRoomId: "room-bad-db", content: "Latency Test" }) {
+          id
+          status
+        }
+      }
+    `;
+
+    // Mock Slow DB (> 2000ms)
+    mockPrisma.message.create.mockImplementationOnce(async () => {
+      await new Promise(r => setTimeout(r, 2500));
+      return { id: 'slow-msg' };
+    });
+
+    const res = await request(app.getHttpServer())
+      .post('/graphql')
+      .send({ query: sendMessageMutation })
+      .expect(200);
+
+    // API should return SUCCESS immediately (Optimistic)
+    const data = res.body.data.sendMessage;
+    expect(data.status).toEqual('PENDING');
+
+    // Wait for Timeout logic (2000ms + buffer)
+    await new Promise(resolve => setTimeout(resolve, 2200));
+
+    // Verify Redis Fallback Push
+    // The key is 'chat:fallback:messages'
+    expect(moduleFixture.get('REDIS_CLIENT').rpush).toHaveBeenCalledWith(
+      'chat:fallback:messages',
+      expect.stringContaining('Latency Test')
+    );
   });
 
 

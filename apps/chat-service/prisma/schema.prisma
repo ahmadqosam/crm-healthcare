@@ -28,6 +28,7 @@ model Message {
   createdAt  DateTime @default(now())
 
   @@index([chatRoomId, createdAt])
+  @@index([status, createdAt])
 }
 
 enum MessageStatus {

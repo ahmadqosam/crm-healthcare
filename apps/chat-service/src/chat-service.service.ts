@@ -1,10 +1,15 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { ClientProxy } from '@nestjs/microservices';
 import { PrismaService } from './prisma.service';
 import { Redis } from 'ioredis';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { v4 as uuidv4 } from 'uuid';
+import * as amqp from 'amqplib';
 
 @Injectable()
 export class ChatService {
+  private readonly logger = new Logger(ChatService.name);
+
   constructor(
     private prisma: PrismaService,
     @Inject('CHAT_SERVICE') private readonly client: ClientProxy,
@@ -12,38 +17,59 @@ export class ChatService {
   ) { }
 
   async sendMessage(senderId: string, chatRoomId: string, content: string, attachmentUrl?: string | null) {
-    // 1. Create Message in DB as PENDING
-    const message = await this.prisma.message.create({
-      data: {
-        chatRoomId,
-        senderId,
-        content,
-        attachmentUrl,
-        status: 'PENDING',
-        createdAt: new Date(),
-      },
-    });
+    // 1. Generate ID immediately (App-side)
+    const messageId = uuidv4();
+    const createdAt = new Date();
 
-    // 2. Add to Redis Queue (Producer) via RabbitMQ
-    const payload = {
-      messageId: message.id,
-      senderId,
+    const messageData = {
+      id: messageId,
       chatRoomId,
+      senderId,
       content,
       attachmentUrl,
-      createdAt: message.createdAt
+      status: 'PENDING',
+      createdAt,
     };
 
-    // 2.1 Cache Message in Redis (Store latest 50 messages)
+    const payload = { ...messageData, messageId }; // Payload for Queue
+
+    // 2. Optimistic: Write to Redis & Queue (Blocking only on Redis/Queue which is fast)
     const redisKey = `chat:${chatRoomId}:messages`;
-    await this.redis.lpush(redisKey, JSON.stringify(message));
-    await this.redis.ltrim(redisKey, 0, 49); // Keep only top 50
-    await this.redis.expire(redisKey, 3600); // Expire after 1 hour of inactivity
+    await this.redis.lpush(redisKey, JSON.stringify(messageData));
+    await this.redis.ltrim(redisKey, 0, 49);
+    await this.redis.expire(redisKey, 3600);
 
-    this.client.emit('new-message', payload);
+    try {
+      this.client.emit('new-message', payload);
+    } catch (error) {
+      this.logger.error(`Failed to emit message ${messageId} to queue`, error);
+    }
 
-    console.log('ChatService.sendMessage result:', JSON.stringify(message, null, 2));
-    return message as any;
+    // 3. Async DB Write (Write-Behind)
+    // We don't await this to return fast to user, BUT we need to handle failure!
+    // Actually, to ensure data safety, we should probably wait for *persistence* somewhere.
+    // Proposal: We wait for "Fastest Persistence" (Redis is already done).
+    // So we just fire-and-forget the DB write? No, if the pod dies, we lose data if Redis flushes.
+    // Better: We try to write to DB with a timeout. If it fails, we write to a Persistent Redis List.
+
+    this.writeToDbOrFallback(messageData);
+
+    console.log('ChatService.sendMessage (Optimistic) result:', JSON.stringify(messageData, null, 2));
+    return messageData as any;
+  }
+
+  private async writeToDbOrFallback(messageData: any) {
+    try {
+      // Race: DB Write vs 2s Timeout
+      await Promise.race([
+        this.prisma.message.create({ data: messageData }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('DB Timeout')), 2000))
+      ]);
+    } catch (error) {
+      this.logger.warn(`DB Write failed/timed-out for ${messageData.id}. Pushing to Fallback List.`);
+      // Push to Fallback List
+      await this.redis.rpush('chat:fallback:messages', JSON.stringify(messageData));
+    }
   }
 
   async markMessageAsRead(messageId: string) {
@@ -167,5 +193,122 @@ export class ChatService {
     return this.prisma.chatRoom.delete({
       where: { id },
     });
+  }
+  @Cron(CronExpression.EVERY_MINUTE)
+  async rescuePendingMessages() {
+    this.logger.log('Running rescuePendingMessages job...');
+    const oneMinuteAgo = new Date(Date.now() - 60 * 1000);
+
+    // Find messages that are still PENDING and created more than 1 minute ago
+    const pendingMessages = await this.prisma.message.findMany({
+      where: {
+        status: 'PENDING',
+        createdAt: {
+          lt: oneMinuteAgo,
+        },
+      },
+      take: 50, // Process in batches
+    });
+
+    if (pendingMessages.length === 0) {
+      return;
+    }
+
+    this.logger.log(`Found ${pendingMessages.length} pending messages to rescue.`);
+
+    for (const message of pendingMessages) {
+      const payload = {
+        messageId: message.id,
+        senderId: message.senderId,
+        chatRoomId: message.chatRoomId,
+        content: message.content,
+        attachmentUrl: message.attachmentUrl,
+        createdAt: message.createdAt
+      };
+
+      try {
+        this.client.emit('new-message', payload);
+        this.logger.log(`Rescued message ${message.id}: Re-emitted to queue.`);
+      } catch (error) {
+        this.logger.error(`Failed to rescue message ${message.id}`, error);
+      }
+    }
+    // 2. Process Fallback List (Failed DB Writes from Optimistic Sends)
+    const fallbackMessages = await this.redis.lrange('chat:fallback:messages', 0, 49);
+    if (fallbackMessages.length > 0) {
+      this.logger.log(`Found ${fallbackMessages.length} messages in Fallback List. Syncing to DB...`);
+      for (const msgString of fallbackMessages) {
+        const msg = JSON.parse(msgString);
+        try {
+          // Check if exists first to avoid duplicate key error if it did succeed but timed out
+          const exists = await this.prisma.message.findUnique({ where: { id: msg.id } });
+          if (!exists) {
+            await this.prisma.message.create({ data: msg });
+          }
+          // Remove from list (This is simple logic; ideally usage of LREM/LPOP carefully)
+          // For simplicity/safety, we risk re-processing if we don't LPOP individually.
+          // Let's LREM this specific item.
+          await this.redis.lrem('chat:fallback:messages', 1, msgString);
+          this.logger.log(`Synced message ${msg.id} to DB.`);
+        } catch (error) {
+          this.logger.error(`Failed to sync fallback message ${msg.id}`, error);
+        }
+      }
+    }
+
+    // 3. Process Dead Letter Queue (DLQ)
+    await this.rescueDLQMessages();
+  }
+
+  private async rescueDLQMessages() {
+    // Determine connection URL from environment variables
+    const user = process.env.RABBITMQ_USER || 'guest';
+    const pass = process.env.RABBITMQ_PASS || 'guest';
+    const host = process.env.RABBITMQ_HOST || 'localhost';
+    const port = 5672;
+    const url = `amqp://${user}:${pass}@${host}:${port}`;
+
+    let connection;
+    let channel;
+
+    try {
+      connection = await amqp.connect(url);
+      channel = await connection.createChannel();
+
+      // Ensure DLQ exists (it should, but safety first)
+      await channel.checkQueue('chat_dlq');
+
+      // Fetch a batch of messages (e.g., up to 10)
+      for (let i = 0; i < 10; i++) {
+        const msg = await channel.get('chat_dlq', { noAck: false }); // We will ack manually
+        if (!msg) break; // No more messages
+
+        const content = JSON.parse(msg.content.toString());
+        const headers = msg.properties.headers || {};
+        const retryCount = (headers['x-retry-count'] || 0) + 1;
+
+        this.logger.log(`Rescuing DLQ message ${content.messageId || 'unknown'}. Retry attempt: ${retryCount}`);
+
+        if (retryCount > 3) {
+          this.logger.error(`Message ${content.messageId} exceeded max retries (3). Discarding.`);
+          channel.ack(msg); // Ack to remove from DLQ
+          continue;
+        }
+
+        // Re-publish to main queue with updated retry count
+        channel.sendToQueue('chat_queue', msg.content, {
+          headers: { ...headers, 'x-retry-count': retryCount },
+          persistent: true,
+        });
+
+        channel.ack(msg); // Remove from DLQ
+      }
+
+    } catch (error) {
+      this.logger.error('Error processing DLQ messages', error);
+    } finally {
+      if (channel) await channel.close().catch(() => { });
+      if (connection) await connection.close().catch(() => { });
+    }
   }
 }

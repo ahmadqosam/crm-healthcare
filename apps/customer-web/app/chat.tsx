@@ -4,6 +4,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { gql } from '@apollo/client';
 import { useQuery, useMutation, useSubscription } from '@apollo/client/react';
 import { Paperclip, FileText, Clock, Check, CheckCheck, AlertCircle, Lock } from 'lucide-react';
+import { jwtDecode } from 'jwt-decode';
+import { getToken } from '../lib/auth';
 
 const CREATE_CHAT = gql`
   mutation CreateChatRoom {
@@ -109,8 +111,6 @@ export default function CustomerChatApp() {
     );
 }
 
-import { jwtDecode } from 'jwt-decode';
-import { getToken } from '../lib/auth';
 
 // ... (existing helper functions or component start)
 
