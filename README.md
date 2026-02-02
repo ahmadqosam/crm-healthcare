@@ -1,98 +1,98 @@
 <p align="center">
   <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
+  <h1 align="center">CRM Healthcare Chat System</h1>
 </p>
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+## 📋 Description
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+A robust, scalable, and secure real-time chat application designed for healthcare contexts. This system features a Microservices architecture using **NestJS**, **GraphQL Federation** (Apollo Gateway), and **Next.js** for the frontend. It is built to handle high concurrency with reliability mechanisms including Dead Letter Queues (DLQ), Write-Behind patterns, and Redis caching.
 
-## Description
+Key capabilities:
+- **Real-time Messaging**: Powered by GraphQL Subscriptions (via Redis PubSub).
+- **Secure Authentication**: JWT-based auth with Access/Refresh token rotation and secure session management.
+- **Reliability**: "Rescue Job" to recover stuck messages and a DLQ for failed operations.
+- **Scalability**: Decoupled services, Redis caching, and optimized DB interactions (Bulk Inserts).
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## 🛠️ Tech Stack
 
-## Project setup
+- **Backend**: NestJS, Apollo Gateway (GraphQL Federation), Prisma ORM
+- **Frontend**: Next.js, Apollo Client, Tailwind CSS
+- **Database**: PostgreSQL
+- **Caching & PubSub**: Redis (Multiple instances for logical separation)
+- **Containerization**: Docker, Docker Compose
 
-```bash
-$ npm install
+## 🏗️ Architecture
+
+The system follows a federated microservices architecture:
+
+```mermaid
+graph TD
+    subgraph Client
+        Browser[Customer Web App]
+    end
+
+    subgraph Infrastructure
+        Gateway[Apollo Gateway]
+        RedisAuth[(Redis: Auth)]
+        RedisChat[(Redis: Chat/PubSub)]
+        Postgres[(PostgreSQL)]
+    end
+
+    subgraph Services
+        AuthService[Auth Service]
+        ChatService[Chat Service]
+    end
+
+    Browser -- GraphQL/HTTP --> Gateway
+    Gateway -- Federation --> AuthService
+    Gateway -- Federation --> ChatService
+    
+    AuthService -- Store Refresh Tokens --> RedisAuth
+    AuthService -- Read/Write User Data --> Postgres
+    
+    ChatService -- Write-Behind/Cache --> RedisChat
+    ChatService -- Persist Messages --> Postgres
+    ChatService -- PubSub --> RedisChat
 ```
 
-## Compile and run the project
+## 🚀 Key Approaches
 
-```bash
-# development
-$ npm run start
+### 1. Authentication & Security
+- **Dual Token System**: Short-lived Access Tokens (15m) and Long-lived Refresh Tokens (7d).
+- **Token Rotation**: Refresh usage invalidates the old chain, preventing replay attacks.
+- **Dedicated Storage**: Refresh tokens are stored in a dedicated Redis instance (`auth-redis`) for performance and isolation.
 
-# watch mode
-$ npm run start:dev
+### 2. High-Performance Chat (Write-Behind)
+- **Immediate Feedback**: Messages are "sent" to the client immediately via Redis PubSub.
+- **Async Persistence**: Messages are queued in Redis Lists and processed by a background worker to minimize DB write latency.
+- **Rescue Job**: A Cron job (`rescuePendingMessages`) runs periodically to pick up any messages that failed to persist or got stuck, ensuring 0% data loss.
 
-# production mode
-$ npm run start:prod
-```
+### 3. Resilience
+- **Dead Letter Queue (DLQ)**: Failed message processing moves items to a DLQ for review or retry.
+- **Circuit Breakers**: Implemented around DB operations to prevent cascading failures during high load.
 
-## Run tests
+## 🏃‍♂️ Setup & Running
 
-```bash
-# unit tests
-$ npm run test
+Requires **Docker** and **Node.js**.
 
-# e2e tests
-$ npm run test:e2e
+1.  **Environment Setup**
+    Copy `.env.example` to `.env` (ensure variables match `docker-compose.yml`).
 
-# test coverage
-$ npm run test:cov
-```
+2.  **Start Infrastructure**
+    ```bash
+    docker-compose up -d
+    ```
+    This spins up Postgres, Redis (Auth), Redis (Chat), Auth Service, Chat Service, and Gateway.
 
-## Deployment
+3.  **Run Frontend**
+    ```bash
+    cd apps/customer-web
+    npm run dev
+    ```
+    Access the app at `http://localhost:3000`.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+4.  **Run E2E Tests**
+    ```bash
+    npm run test:e2e        # Chat Service Integration
+    npm run test:e2e:auth   # Auth Service Integration
+    ```
