@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { gql } from '@apollo/client';
-import { useQuery, useMutation, useSubscription } from '@apollo/client/react';
+import { useQuery, useMutation, useSubscription, useLazyQuery } from '@apollo/client/react';
 import { Paperclip, FileText, Clock, Check, CheckCheck, AlertCircle, Lock } from 'lucide-react';
 import { jwtDecode } from 'jwt-decode';
 import { getToken } from '../lib/auth';
@@ -52,15 +52,45 @@ const MESSAGE_SUB = gql`
   }
 `;
 
+const GET_CHATS = gql`
+  query GetChats {
+    getChats {
+      id
+      customerEmail
+      status
+      createdAt
+    }
+  }
+`;
+
+// ... existing GET_MESSAGES ...
+
 export default function CustomerChatApp() {
     const [roomId, setRoomId] = useState<string | null>(null);
     const [message, setMessage] = useState('');
+
+    // We use useLazyQuery so we can imperatively check for chats on mount
+    const [getChats, { loading: checkingChats }] = useLazyQuery(GET_CHATS, {
+        fetchPolicy: 'network-only'
+    });
+
     const [createChat, { loading: creating, error: createError }] = useMutation(CREATE_CHAT);
 
     useEffect(() => {
         // Auto-create/join chat room on mount
         const initChat = async () => {
             try {
+                // 1. Check if user already has an active chat
+                const { data: chatData } = await getChats();
+
+                if (chatData?.getChats && chatData.getChats.length > 0) {
+                    console.log("Reusing existing chat session:", chatData.getChats[0].id);
+                    setRoomId(chatData.getChats[0].id);
+                    return;
+                }
+
+                // 2. If no chat exists, create a new one
+                console.log("No existing chat found. Creating new session...");
                 const res = await createChat();
                 if (res.data?.createChatRoom) {
                     setRoomId(res.data.createChatRoom.id);
@@ -70,9 +100,9 @@ export default function CustomerChatApp() {
             }
         };
         initChat();
-    }, [createChat]);
+    }, [createChat, getChats]);
 
-    if (creating) {
+    if (creating || checkingChats) {
         return (
             <div className="flex h-screen items-center justify-center bg-gray-50">
                 <div className="text-center">
