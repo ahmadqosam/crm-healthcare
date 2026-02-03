@@ -25,35 +25,7 @@ Key capabilities:
 
 The system follows a federated microservices architecture:
 
-```mermaid
-graph TD
-    subgraph Client
-        Browser[Customer Web App]
-    end
-
-    subgraph Infrastructure
-        Gateway[Apollo Gateway]
-        RedisAuth[(Redis: Auth)]
-        RedisChat[(Redis: Chat/PubSub)]
-        Postgres[(PostgreSQL)]
-    end
-
-    subgraph Services
-        AuthService[Auth Service]
-        ChatService[Chat Service]
-    end
-
-    Browser -- GraphQL/HTTP --> Gateway
-    Gateway -- Federation --> AuthService
-    Gateway -- Federation --> ChatService
-    
-    AuthService -- Store Refresh Tokens --> RedisAuth
-    AuthService -- Read/Write User Data --> Postgres
-    
-    ChatService -- Write-Behind/Cache --> RedisChat
-    ChatService -- Persist Messages --> Postgres
-    ChatService -- PubSub --> RedisChat
-```
+![Architecture Diagram](./assets/architecture_diagram.png)
 
 ## 🧠 Detailed Architecture & Design Decisions
 
