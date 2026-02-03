@@ -34,6 +34,9 @@ const SEND_MESSAGE = gql`
   mutation SendMessage($input: SendMessageInput!) {
     sendMessage(input: $input) {
       id
+      senderId
+      content
+      attachmentUrl
       status
       createdAt
     }
@@ -144,7 +147,7 @@ export default function CustomerChatApp() {
 // ... (existing helper functions or component start)
 
 function ChatRoom({ roomId }: { roomId: string }) {
-    const { data, loading, subscribeToMore } = useQuery(GET_MESSAGES, {
+    const { data, loading, subscribeToMore, refetch } = useQuery(GET_MESSAGES, {
         variables: { roomId },
     });
     const [sendMessage] = useMutation(SEND_MESSAGE);
@@ -152,6 +155,11 @@ function ChatRoom({ roomId }: { roomId: string }) {
     const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
     const [isUploading, setIsUploading] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    };
 
     useEffect(() => {
         const token = getToken();
@@ -164,6 +172,25 @@ function ChatRoom({ roomId }: { roomId: string }) {
             }
         }
     }, []);
+
+    useEffect(() => {
+        scrollToBottom();
+    }, [data?.getMessages]);
+
+    useEffect(() => {
+        const handleReconnection = () => {
+            console.log("Connection restored/focused. Refetching messages...");
+            refetch();
+        };
+
+        window.addEventListener('online', handleReconnection);
+        window.addEventListener('focus', handleReconnection);
+
+        return () => {
+            window.removeEventListener('online', handleReconnection);
+            window.removeEventListener('focus', handleReconnection);
+        };
+    }, [refetch]);
 
     // Setup Subscription
     useEffect(() => {
@@ -225,18 +252,60 @@ function ChatRoom({ roomId }: { roomId: string }) {
 
         if (!contentToSend.trim() && !attachmentUrl) return;
 
+        const currentInput = contentToSend;
+        const dedupId = uuidv4();
+        if (contentOverride === undefined) setInput('');
+
         try {
             await sendMessage({
                 variables: {
                     input: {
                         chatRoomId: roomId,
-                        content: contentToSend || (attachmentUrl ? 'Sent an attachment' : ''),
+                        content: currentInput || (attachmentUrl ? 'Sent an attachment' : ''),
                         attachmentUrl: attachmentUrl,
-                        deduplicationId: uuidv4(),
+                        deduplicationId: dedupId,
                     },
                 },
+                optimisticResponse: {
+                    sendMessage: {
+                        __typename: 'Message',
+                        id: dedupId,
+                        content: currentInput || (attachmentUrl ? 'Sent an attachment' : ''),
+                        senderId: currentUserEmail,
+                        status: 'PENDING',
+                        attachmentUrl: attachmentUrl || null,
+                        createdAt: new Date().toISOString(),
+                    },
+                },
+                update: (cache, { data: { sendMessage } }: any) => {
+                    const existingData: any = cache.readQuery({
+                        query: GET_MESSAGES,
+                        variables: { roomId },
+                    });
+
+                    if (existingData) {
+                        const existingMessage = existingData.getMessages.find((m: any) => m.id === sendMessage.id);
+
+                        // If the message already exists and is SENT (e.g. from subscription), 
+                        // do not overwrite it with the PENDING status from the mutation response.
+                        if (existingMessage && existingMessage.status === 'SENT' && sendMessage.status === 'PENDING') {
+                            return;
+                        }
+
+                        // If it doesn't exist, append it. If it exists (and isn't protected above), ignore/update?
+                        // Standard behavior for optimistic add is append if not exists.
+                        if (!existingMessage) {
+                            cache.writeQuery({
+                                query: GET_MESSAGES,
+                                variables: { roomId },
+                                data: {
+                                    getMessages: [...existingData.getMessages, sendMessage],
+                                },
+                            });
+                        }
+                    }
+                },
             });
-            if (contentOverride === undefined) setInput('');
         } catch (err) {
             console.error("Error sending message:", err);
         }
@@ -347,6 +416,7 @@ function ChatRoom({ roomId }: { roomId: string }) {
                         <p className="text-xs">Start the consultation by saying hello.</p>
                     </div>
                 )}
+                <div ref={messagesEndRef} />
             </div>
 
             {/* Input Area */}

@@ -39,6 +39,8 @@ const SEND_MESSAGE = gql`
   mutation SendMessage($input: SendMessageInput!) {
     sendMessage(input: $input) {
       id
+      senderId
+      content
       status
       createdAt
     }
@@ -51,6 +53,7 @@ const MESSAGE_SUB = gql`
       id
       senderId
       content
+      status
       createdAt
     }
   }
@@ -202,7 +205,7 @@ export default function AgentDashboard() {
 
 
 function ChatWindow({ roomId }: { roomId: string, agentId: string }) {
-    const { data, loading, subscribeToMore } = useQuery(GET_MESSAGES, {
+    const { data, loading, subscribeToMore, refetch } = useQuery(GET_MESSAGES, {
         variables: { roomId },
     });
     const [sendMessage] = useMutation(SEND_MESSAGE);
@@ -227,8 +230,23 @@ function ChatWindow({ roomId }: { roomId: string, agentId: string }) {
     }, []);
 
     useEffect(() => {
+        const handleReconnection = () => {
+            console.log("Connection restored/focused. Refetching messages...");
+            refetch();
+        };
+
+        window.addEventListener('online', handleReconnection);
+        window.addEventListener('focus', handleReconnection);
+
+        return () => {
+            window.removeEventListener('online', handleReconnection);
+            window.removeEventListener('focus', handleReconnection);
+        };
+    }, [refetch]);
+
+    useEffect(() => {
         scrollToBottom();
-    }, [data?.getMessages]);
+    }, [data?.getMessages, roomId]);
 
     useEffect(() => {
         const unsubscribe = subscribeToMore({
@@ -237,7 +255,18 @@ function ChatWindow({ roomId }: { roomId: string, agentId: string }) {
             updateQuery: (prev, { subscriptionData }) => {
                 if (!subscriptionData.data || !prev || !prev.getMessages) return prev;
                 const newMessage = subscriptionData.data.messageReceived;
-                if (prev.getMessages.some((m: any) => m.id === newMessage.id)) return prev;
+
+                const exists = prev.getMessages.some((m: any) => m.id === newMessage.id);
+
+                if (exists) {
+                    return {
+                        ...prev,
+                        getMessages: prev.getMessages.map((m: any) =>
+                            m.id === newMessage.id ? newMessage : m
+                        ),
+                    };
+                }
+
                 return {
                     ...prev,
                     getMessages: [...prev.getMessages, newMessage],
@@ -249,16 +278,54 @@ function ChatWindow({ roomId }: { roomId: string, agentId: string }) {
 
     const handleSend = async () => {
         if (!input.trim()) return;
+
+        const currentInput = input;
+        const dedupId = uuidv4();
+        setInput('');
+
         await sendMessage({
             variables: {
                 input: {
                     chatRoomId: roomId,
-                    content: input,
-                    deduplicationId: uuidv4(),
+                    content: currentInput,
+                    deduplicationId: dedupId,
                 },
             },
+            optimisticResponse: {
+                sendMessage: {
+                    __typename: 'Message',
+                    id: dedupId,
+                    content: currentInput,
+                    senderId: currentUserEmail,
+                    status: 'PENDING',
+                    createdAt: new Date().toISOString(),
+                },
+            },
+            update: (cache, { data: { sendMessage } }: any) => {
+                const existingData: any = cache.readQuery({
+                    query: GET_MESSAGES,
+                    variables: { roomId },
+                });
+
+                if (existingData) {
+                    const existingMessage = existingData.getMessages.find((m: any) => m.id === sendMessage.id);
+
+                    if (existingMessage && existingMessage.status === 'SENT' && sendMessage.status === 'PENDING') {
+                        return;
+                    }
+
+                    if (!existingMessage) {
+                        cache.writeQuery({
+                            query: GET_MESSAGES,
+                            variables: { roomId },
+                            data: {
+                                getMessages: [...existingData.getMessages, sendMessage],
+                            },
+                        });
+                    }
+                }
+            },
         });
-        setInput('');
     };
 
     if (loading) return <div className="flex-1 flex items-center justify-center p-4 text-slate-500">Retrieving secure history...</div>;
