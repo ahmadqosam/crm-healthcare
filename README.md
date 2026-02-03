@@ -53,12 +53,23 @@ We utilize a **Write-Behind** pattern to decouple the critical path (sending a m
     - *Manual*: Engineers can inspect the DLQ payload to debug schema issues.
 
 ### 4. Ordering & Scalability
-- **Ordering Strategy**: We rely on Client-generated UUIDs and `createdAt` timestamps.
-    - *Reason*: In a distributed 10x scale environment, strictly ordered queues (FIFO) bottleneck throughput because they force serialization.
-    - *Trade-off*: Messages might arrive out of order (milliseconds). The Frontend is responsible for sorting by `createdAt`.
-- **10x Traffic Burst**: The Redis List acts as a buffer. Consumers take messages at their maximum sustainable rate (`prefetch_count`). The backlog grows temporarily but clears as traffic normalizes, protecting the DB from overload.
+-   **Message Ordering**: We utilize a combination of Client-generated UUIDs and `createdAt` timestamps.
+    -   *Strategy*: Since strict FIFO queues can bottleneck throughput at scale (10x bursts), we allow minimal out-of-order processing (milliseconds). The Frontend (Client) is responsible for sorting messages by `createdAt` to ensure correct visual order.
+-   **Scaling**: The Redis List acts as a buffer. Consumers process messages at their maximum sustainable rate.
 
-### 5. Operational Access Control (Small Team)
+### 5. Duplicate Message Prevention (Idempotency)
+To handle network retries without creating ghost messages:
+-   **Mechanism**: Clients generate a unique `deduplicationId` (UUID) for each message.
+-   **Check**: The backend checks if this ID exists in Redis before processing.
+    -   *Hit*: Returns the existing message immediately (cached).
+    -   *Miss*: Processes the message and caches the result for 10 minutes.
+
+### 6. Retry & Failure Handling
+-   **Rescue Job**: A background Cron Job (`rescuePendingMessages`) periodically scans Redis for messages that failed to move to Postgres. It bulk-inserts them to ensure no data loss.
+-   **Dead Letter Queue (DLQ)**: If a message fails processing 3 times (e.g., malformed data), it is moved to a DLQ (`chat_dlq`) for manual inspection, preventing queue blockage.
+-   **Circuit Breaker**: If the Database is unreachable, the Rescue Job pauses execution to prevent cascading failures.
+
+### 7. Operational Access Control (Small Team)
 For a constrained team size, we enforce strict ease-of-management and security defaults:
 - **No Direct Prod DB Access**: Write access is restricted to CI/CD pipelines and Migration Scripts. Live interaction is via Read-Only replicas or Admin Dashboards.
 - **Secrets Management**: All sensitive keys (DB_URL, JWT_SECRET) are injected via Environment Variables (e.g., AWS Secrets Manager), never committed to code.

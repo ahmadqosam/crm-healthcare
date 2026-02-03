@@ -16,9 +16,18 @@ export class ChatService {
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) { }
 
-  async sendMessage(senderId: string, chatRoomId: string, content: string, attachmentUrl?: string | null) {
-    // 1. Generate ID immediately (App-side)
-    const messageId = uuidv4();
+  async sendMessage(senderId: string, chatRoomId: string, content: string, attachmentUrl?: string | null, deduplicationId?: string) {
+    const messageId = deduplicationId || uuidv4();
+
+    // Idempotency Check
+    if (deduplicationId) {
+      const dedupKey = `message:dedup:${deduplicationId}`;
+      const cachedMessage = await this.redis.get(dedupKey);
+      if (cachedMessage) {
+        this.logger.log(`Idempotency HIT for ${deduplicationId}. Returning cached message.`);
+        return JSON.parse(cachedMessage);
+      }
+    }
     const createdAt = new Date();
 
     const messageData = {
@@ -31,9 +40,7 @@ export class ChatService {
       createdAt,
     };
 
-    const payload = { ...messageData, messageId }; // Payload for Queue
-
-    // 2. Optimistic: Write to Redis & Queue (Blocking only on Redis/Queue which is fast)
+    const payload = { ...messageData, messageId };
     const redisKey = `chat:${chatRoomId}:messages`;
     await this.redis.lpush(redisKey, JSON.stringify(messageData));
     await this.redis.ltrim(redisKey, 0, 49);
@@ -45,17 +52,16 @@ export class ChatService {
       this.logger.error(`Failed to emit message ${messageId} to queue`, error);
     }
 
-    // 3. Async DB Write (Write-Behind)
-    // We don't await this to return fast to user, BUT we need to handle failure!
-    // Actually, to ensure data safety, we should probably wait for *persistence* somewhere.
-    // Proposal: We wait for "Fastest Persistence" (Redis is already done).
-    // So we just fire-and-forget the DB write? No, if the pod dies, we lose data if Redis flushes.
-    // Better: We try to write to DB with a timeout. If it fails, we write to a Persistent Redis List.
+    // Save for Idempotency (10 minutes)
+    if (deduplicationId) {
+      const dedupKey = `message:dedup:${deduplicationId}`;
+      await this.redis.set(dedupKey, JSON.stringify(messageData), 'EX', 600);
+    }
 
     this.writeToDbOrFallback(messageData);
 
-    console.log('ChatService.sendMessage (Optimistic) result:', JSON.stringify(messageData, null, 2));
-    return messageData as any;
+    this.logger.log(`Optimistic message sent: ${messageId}`);
+    return messageData;
   }
 
   private async writeToDbOrFallback(messageData: any) {
@@ -115,17 +121,7 @@ export class ChatService {
       const cachedMessages = await this.redis.lrange(redisKey, 0, limit - 1);
 
       if (cachedMessages.length > 0) {
-        console.log(`Cache HIT for chatRoomId: ${chatRoomId}`);
-        // Redis stores latest first (LPUSH), need to reverse to show oldest first if frontend expects that, 
-        // OR if frontend expects newest first (which it implies by 'take: -limit' in DB query), 
-        // then we need to be careful.
-        // DB Query 'take: -limit, orderBy: createdAt: asc' means: 
-        // Get the LAST 50 records sorted by createdAt ASC.
-        // Effectively getting the *most recent* 50 messages, but returning them in chronological order.
-
-        // REDIS LPUSH: [Newest, ..., Oldest]
-        // LRANGE 0 49: [Newest, ..., Oldest]
-        // We need to reverse this to match proper chronological order: [Oldest, ..., Newest]
+        this.logger.log(`Cache HIT for chatRoomId: ${chatRoomId}`);
         return cachedMessages.map((msg) => JSON.parse(msg)).reverse();
       }
     }
@@ -153,21 +149,7 @@ export class ChatService {
 
     if (!cursor && messages.length > 0) {
       const redisKey = `chat:${chatRoomId}:messages`;
-      // Messages are [Oldest, ..., Newest]
-      // Redis needs [Newest, ..., Oldest] via LPUSH
-      // So we iterate messages in regular order and LPUSH them? No.
-      // LPUSH adds to the LEFT. 
-      // Msg1 (Old), Msg2 (New). 
-      // LPUSH Msg1 -> [Msg1]
-      // LPUSH Msg2 -> [Msg2, Msg1] -> Correct order for Redis list? 
-      // Wait, if I read with LRANGE, I get [Msg2, Msg1]. 
-
       const pipeline = this.redis.pipeline();
-      // To reconstruct, we want the LAST message to be at index 0 (Left).
-      // So we need to push Oldest...Newest? 
-      // If we push Oldest first: [Oldest]
-      // Push Newer: [Newer, Oldest]...
-      // Yes. So pushing in chronological order (ASC) works for LPUSH to stack them Newest-first.
 
       messages.forEach(msg => pipeline.lpush(redisKey, JSON.stringify(msg)));
       pipeline.ltrim(redisKey, 0, limit - 1);
@@ -255,18 +237,12 @@ export class ChatService {
 
         this.logger.log(`Bulk synced ${result.count} messages to DB.`);
 
-        // Remove processed messages from Redis
-        // Since we processed the first N messages, we can safely LTRIM them.
-        // Wait! LTRIM keeps the range. LTRIM key 50 -1 keeps from index 50 to end.
-        // So we remove 0 to length-1.
         await this.redis.ltrim('chat:fallback:messages', fallbackMessages.length, -1);
-
       } catch (error) {
         this.logger.error('Failed to bulk sync messages', error);
       }
     }
 
-    // 3. Process Dead Letter Queue (DLQ)
     await this.rescueDLQMessages();
   }
 

@@ -15,30 +15,30 @@ import { UploadController } from './upload.controller';
     GraphQLModule.forRoot<ApolloGatewayDriverConfig>({
       driver: ApolloGatewayDriver,
       server: {
-        // playground: true, // Apollo Server 4 uses sandbox
-        csrfPrevention: false,
-      },
-      gateway: {
-        supergraphSdl: new IntrospectAndCompose({
-          subgraphs: [
-            { name: 'auth', url: process.env.AUTH_SERVICE_URL || 'http://auth-service:3001/graphql' },
-            { name: 'chat', url: process.env.CHAT_SERVICE_URL || 'http://chat-service:3002/graphql' },
-          ],
-        }),
-        buildService({ url }) {
-          return new RemoteGraphQLDataSource({
-            url,
-            willSendRequest({ request, context }) {
-              if (context.req && context.req.headers) {
-                if (context.req.headers.authorization && request.http) {
-                  request.http.headers.set('authorization', context.req.headers.authorization);
-                }
-              }
-            },
-          });
+        server: {
+          csrfPrevention: false,
         },
-      },
-    }),
+        gateway: {
+          supergraphSdl: new IntrospectAndCompose({
+            subgraphs: [
+              { name: 'auth', url: process.env.AUTH_SERVICE_URL || 'http://auth-service:3001/graphql' },
+              { name: 'chat', url: process.env.CHAT_SERVICE_URL || 'http://chat-service:3002/graphql' },
+            ],
+          }),
+          buildService({ url }) {
+            return new RemoteGraphQLDataSource({
+              url,
+              willSendRequest({ request, context }) {
+                if (context.req && context.req.headers) {
+                  if (context.req.headers.authorization && request.http) {
+                    request.http.headers.set('authorization', context.req.headers.authorization);
+                  }
+                }
+              },
+            });
+          },
+        },
+      }),
   ],
   controllers: [UploadController],
   providers: [],

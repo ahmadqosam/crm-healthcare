@@ -80,4 +80,7 @@ export class SendMessageInput {
     // senderId typically comes from Context (JWT), but for simplicity or arguments:
     @Field({ nullable: true })
     senderId?: string;
+
+    @Field({ nullable: true })
+    deduplicationId?: string;
 }

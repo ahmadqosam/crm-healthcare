@@ -8,6 +8,7 @@ import {
     Paperclip, Mic, Smile, Send,
     Check, CheckCheck, Clock, AlertCircle, Trash2
 } from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
 import { jwtDecode } from 'jwt-decode';
 import { getToken } from '../lib/auth';
 
@@ -61,12 +62,10 @@ const DELETE_CHAT = gql`
   }
 `;
 
-// Helper to generate initials
 const getInitials = (email: string) => {
     return email ? email.substring(0, 2).toUpperCase() : '??';
 };
 
-// Helper for random soft background color based on string
 const getAvatarColor = (str: string) => {
     const colors = ['bg-red-100 text-red-600', 'bg-green-100 text-green-600', 'bg-blue-100 text-blue-600', 'bg-yellow-100 text-yellow-600', 'bg-purple-100 text-purple-600', 'bg-pink-100 text-pink-600'];
     let hash = 0;
@@ -153,7 +152,6 @@ export default function AgentDashboard() {
                                     </div>
                                     <div className="flex justify-between items-center">
                                         <p className="text-sm text-slate-500 truncate pr-2">
-                                            {/* Mocking last message for now as it's not in the list query efficiently yet */}
                                             {chat.status}
                                         </p>
                                         <button
@@ -256,6 +254,7 @@ function ChatWindow({ roomId }: { roomId: string, agentId: string }) {
                 input: {
                     chatRoomId: roomId,
                     content: input,
+                    deduplicationId: uuidv4(),
                 },
             },
         });
@@ -264,7 +263,6 @@ function ChatWindow({ roomId }: { roomId: string, agentId: string }) {
 
     if (loading) return <div className="flex-1 flex items-center justify-center p-4 text-slate-500">Retrieving secure history...</div>;
 
-    // Sort messages by date
     const sortedMessages = data?.getMessages ? [...data.getMessages].sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()) : [];
 
     return (

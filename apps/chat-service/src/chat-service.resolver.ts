@@ -21,7 +21,7 @@ export class ChatServiceResolver {
     ): Promise<Message> {
         // Use senderId from token if available (secure), otherwise fallback to input (legacy support if needed, or better: enforce token)
         const senderId = user.email || user.userId;
-        return this.chatService.sendMessage(senderId, input.chatRoomId, input.content, input.attachmentUrl);
+        return this.chatService.sendMessage(senderId, input.chatRoomId, input.content, input.attachmentUrl, input.deduplicationId);
     }
 
     @Mutation(() => Message)

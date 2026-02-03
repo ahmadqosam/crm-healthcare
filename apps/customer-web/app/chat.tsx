@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { gql } from '@apollo/client';
 import { useQuery, useMutation, useSubscription, useLazyQuery } from '@apollo/client/react';
 import { Paperclip, FileText, Clock, Check, CheckCheck, AlertCircle, Lock } from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
 import { jwtDecode } from 'jwt-decode';
 import { getToken } from '../lib/auth';
 
@@ -80,7 +81,6 @@ export default function CustomerChatApp() {
         // Auto-create/join chat room on mount
         const initChat = async () => {
             try {
-                // 1. Check if user already has an active chat
                 const { data: chatData } = await getChats();
 
                 if (chatData?.getChats && chatData.getChats.length > 0) {
@@ -89,7 +89,6 @@ export default function CustomerChatApp() {
                     return;
                 }
 
-                // 2. If no chat exists, create a new one
                 console.log("No existing chat found. Creating new session...");
                 const res = await createChat();
                 if (res.data?.createChatRoom) {
@@ -175,9 +174,15 @@ function ChatRoom({ roomId }: { roomId: string }) {
                 if (!subscriptionData.data || !prev || !prev.getMessages) return prev;
                 const newMessage = subscriptionData.data.messageReceived;
 
-                // Prevent duplicates (e.g. if we already have it from mutation or double subscription)
-                if (prev.getMessages.some((m: any) => m.id === newMessage.id)) {
-                    return prev;
+                const exists = prev.getMessages.some((m: any) => m.id === newMessage.id);
+
+                if (exists) {
+                    return {
+                        ...prev,
+                        getMessages: prev.getMessages.map((m: any) =>
+                            m.id === newMessage.id ? newMessage : m
+                        ),
+                    };
                 }
 
                 return {
@@ -227,6 +232,7 @@ function ChatRoom({ roomId }: { roomId: string }) {
                         chatRoomId: roomId,
                         content: contentToSend || (attachmentUrl ? 'Sent an attachment' : ''),
                         attachmentUrl: attachmentUrl,
+                        deduplicationId: uuidv4(),
                     },
                 },
             });
@@ -265,10 +271,6 @@ function ChatRoom({ roomId }: { roomId: string }) {
                         onClick={async () => {
                             if (confirm('Are you sure you want to logout?')) {
                                 try {
-                                    // Decode token to get userId is not strictly needed if backend infers from context, 
-                                    // but our mutation requires userId. 
-                                    // For now, simpler: just client-side logout.
-                                    // Ideally call: logout(variables: { userId: ... })
                                     const { removeToken } = await import('../lib/auth');
                                     removeToken();
                                     window.location.reload();
